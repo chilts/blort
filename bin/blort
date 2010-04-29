@@ -1,0 +1,312 @@
+#!/usr/bin/perl
+## ----------------------------------------------------------------------------
+# Bookmarks:
+# * http://staynalive.com/articles/2009/05/19/social-coding-how-to-code-twitters-oauth-using-netoauth-and-perl/
+# * http://dev.twitter.com/pages/auth
+# * http://oauth.net/core/1.0a/
+## ----------------------------------------------------------------------------
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use Getopt::Mixed "nextOption";
+use Config::Simple;
+use Time::Local;
+use String::Random qw(random_string);
+use DBI;
+use Net::OAuth;
+use Net::OAuth::RequestTokenRequest;
+use Net::OAuth::RequestTokenResponse;
+use Net::OAuth::AccessTokenRequest;
+use Net::OAuth::AccessTokenResponse;
+use Net::OAuth::ProtectedResourceRequest;
+use HTTP::Request::Common;
+use LWP::UserAgent;
+use JSON::Any;
+
+## ----------------------------------------------------------------------------
+
+my $VERSION = '0.1';
+
+my @IN_OPTS = (
+    # strings
+    'file=s', # Config File to use
+    'p=s',    # PIN (to get your Access Token/Secret
+    's=s',    # Tweet or 'Status'
+    # booleans
+    'help',
+    'version',
+);
+
+my %BOOLEAN_ARGS = (
+    'help'      => 1,
+    'version'   => 1,
+);
+
+my $command = {
+    'request-token'      => 1,
+    'get-access-token'   => 1,
+    'generate-database'  => 1,
+    'verify-credentials' => 1,
+    'post'               => 1,
+};
+
+my $consumer_key = 'RkUuAkKWMeR4LOSp4torTQ';
+my $consumer_secret = 'fnCHWELbJob7oGpRPMLX3o2lushs9KHENgGTRqu3E';
+my $request_token_url = 'https://api.twitter.com/oauth/request_token';
+my $authorize_url = 'https://api.twitter.com/oauth/authorize';
+my $access_token_url = 'https://api.twitter.com/oauth/access_token';
+my $post_url = 'http://api.twitter.com/1/statuses/update.json';
+
+# Using OAuth
+# 1) Retrieve a Request Token
+# 2) Request User Authorisation
+# 3) Exchange the Request Token for an Access Token
+
+## ----------------------------------------------------------------------------
+# main program
+
+{
+    my $args = get_options(\@IN_OPTS, \%BOOLEAN_ARGS);
+
+    # do the version and help
+    if ( exists $args->{version} ) {
+        print "$0 version $VERSION\n";
+        exit;
+    }
+
+    if ( exists $args->{help} ) {
+        usage();
+        exit;
+    }
+
+    # make sure that the command given is valid
+    Getopt::Mixed::abortMsg('specify a command')
+       if @ARGV == 0;
+
+    my $command_name = shift @ARGV;
+
+    unless ( exists $command->{$command_name} ) {
+        Getopt::Mixed::abortMsg('unknown command')
+    }
+
+    # load the config
+    my $cfg = Config::Simple->new( $args->{file} || "$ENV{HOME}/.blort.rc" );
+
+    if ( $command_name eq 'request-token' ) {
+        request_token( $cfg, $args );
+    }
+    elsif ( $command_name eq 'get-access-token' ) {
+        get_access_token( $cfg, $args );
+    }
+    elsif ( $command_name eq 'generate-database' ) {
+        generate_database( $cfg, $args );
+    }
+    elsif ( $command_name eq 'post' ) {
+        post( $cfg, $args );
+    }
+
+}
+
+sub default_params {
+    return (
+        consumer_key     => $consumer_key,
+        consumer_secret  => $consumer_secret,
+        request_method   => 'GET',
+        signature_method => 'HMAC-SHA1',
+        timestamp        => time(),
+        nonce            => random_string('s' x 16),
+        callback_url     => 'oob',
+    );
+}
+
+sub request_token {
+    my ($cfg) = @_;
+
+    my $request = Net::OAuth::RequestTokenRequest->new(
+        default_params(),
+        request_url      => $request_token_url,
+        request_method   => 'POST',
+    );
+    $request->sign();
+
+    my $ua = LWP::UserAgent->new();
+    my $response = $ua->post($request->to_url);
+
+    if ( $response->is_success() ) {
+        # FixMe: see if we can get the params from the content, which looks like:
+        # * oauth_token=xxx&oauth_token_secret=xxx&oauth_callback_confirmed=true
+        my ($token, $secret) = $response->content() =~ m{oauth_token=([^&]+)&oauth_token_secret=([^&]+)}xms;
+        print "RequestToken  : $token\n";
+        print "RequestSecret : $secret\n";
+
+        # put these into the Config and save it out
+        print "Saving config file: ", $cfg->filename(), "\n\n";
+        $cfg->param( 'RequestToken', $token );
+        $cfg->param( 'RequestSecret', $secret );
+        $cfg->save();
+
+        print "To allow $0 access to your Twitter account, you must visit this link in your browser:\n";
+        print "    $authorize_url?oauth_token=$token\n\n";
+        print "Once you have done that, come back here and issue the command:\n";
+        print "    $0 get-access-token -p <PIN>\n\n";
+    }
+    else {
+        print STDERR "Problem";
+        exit 2;
+    }
+
+    return $response;
+}
+
+sub get_access_token {
+    my ($cfg, $args) = @_;
+
+    # $args->{p} is the PIN
+    unless ( defined $args->{p} ) {
+        Getopt::Mixed::abortMsg(q{no pin provided})
+    }
+
+    # The Net::OAuth module doesn't (yet) allow this verifier/PIN, but it is stated in
+    # the spec here: http://oauth.net/core/1.0a/#auth_step3 so let's enable it
+    # (not quite monkeypatching).
+    Net::OAuth::AccessTokenRequest->add_required_message_params(qw/verifier/);
+
+    my $request = Net::OAuth::AccessTokenRequest->new(
+        default_params(),
+        token            => $cfg->param( 'RequestToken' ),
+        token_secret     => $cfg->param( 'RequestSecret' ),
+        request_url      => $access_token_url,
+        request_method   => 'POST',
+        verifier         => $args->{p},
+    );
+    $request->sign();
+
+    my $ua = LWP::UserAgent->new();
+    my $response = $ua->post($request->to_url);
+
+    # ok, got a response, now try and parse it
+    if ( $response->is_success ) {
+        my $response = Net::OAuth::AccessTokenResponse->from_post_body($response->content);
+
+        print "AccessToken  : ", $response->token, "\n";
+        print "AccessSecret : ", $response->token_secret, "\n";
+
+        # put these into the Config and save it out
+        print "Saving config file: ", $cfg->filename(), "\n\n";
+        $cfg->param( 'AccessToken', $response->token );
+        $cfg->param( 'AccessSecret', $response->token_secret );
+        $cfg->save();
+
+        print "Congratulations, Blort can now access your Twitter data via the Twitter API\n";
+        usage();
+    }
+    else {
+        print STDERR 'Could not get an Access Token: ', $response->as_string, "\n";
+    }
+
+    return $response;
+}
+
+sub post {
+    my ($cfg, $args) = @_;
+
+    # $args->{s} is the Tweet
+    unless ( defined $args->{s} ) {
+        Getopt::Mixed::abortMsg(q{no tweet provided})
+    }
+
+    my $request = Net::OAuth::ProtectedResourceRequest->new(
+        default_params(),
+        token            => $cfg->param( 'AccessToken' ),
+        token_secret     => $cfg->param( 'AccessSecret' ),
+        request_url      => $post_url,
+        request_method   => 'POST',
+        extra_params => {
+            status => $args->{s},
+        },
+    );
+    $request->sign();
+
+    my $ua = LWP::UserAgent->new();
+    my $response = $ua->post($request->to_url);
+
+    unless ( $response->is_success ) {
+        print STDERR 'Could not access Protected Resource: ', $response->as_string, "\n";
+        return;
+    }
+
+    my $json = JSON::Any->jsonToObj( $response->content() );
+    print Dumper($json);
+
+    return $json->{id}; # something true
+}
+
+=for COMMENT
+sub generate_database {
+    my ($cfg) = @_;
+    unless ( defined $cfg->param( 'DatabaseFile' ) ) {
+        Getopt::Mixed::abortMsg(q{filestore not defined})
+    }
+
+    my $dbh = DBI->connect("dbi:SQLite:dbname=$cfg->{DatabaseFile}", "", "");
+    print Dumper($dbh);
+
+    # ToDo: create the tables we need
+}
+=cut
+
+## ----------------------------------------------------------------------------
+
+sub usage {
+   print <<"END_USAGE";
+Usage: $0 COMMAND [options]
+
+Commands:
+   request-token
+   get-access-token
+   post -s <message>
+
+See <http://www.chilts.org/project/blort/> for further information.
+Report bugs to <andychilton\@gmail.com>.
+END_USAGE
+}
+
+sub get_options {
+    my ($in_opts, $booleans) = @_;
+
+    my $args = {};
+    Getopt::Mixed::init( @$in_opts );
+    while( my($opt, $val) = nextOption() ) {
+        # if boolean, keep a count of how many there is only
+        if ( exists $booleans->{$opt} ) {
+            $args->{$opt}++;
+            next;
+        }
+        # normal 'string' value
+        if ( defined $args->{$opt} ) {
+            unless ( ref $args->{$opt} eq 'ARRAY' ) {
+                $args->{$opt} = [ $args->{$opt} ];
+            }
+            push @{$args->{$opt}}, $val;
+        }
+        else {
+            $args->{$opt} = $val;
+        }
+    }
+    Getopt::Mixed::cleanup();
+    return $args;
+}
+
+## ----------------------------------------------------------------------------
+# monkeypatch Config::Simple
+
+package Config::Simple;
+sub filename {
+    my ($self) = @_;
+    return $self->{_FILE_NAME};
+}
+1;
+
+## ----------------------------------------------------------------------------
