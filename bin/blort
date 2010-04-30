@@ -12,6 +12,7 @@ use warnings;
 use Data::Dumper;
 use Getopt::Mixed "nextOption";
 use Config::Simple;
+use File::Slurp;
 use Time::Local;
 use String::Random qw(random_string);
 use DBI;
@@ -81,18 +82,13 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
         exit;
     }
 
+    # load the config
+    my $cfg = load_config( $args->{file} || "$ENV{HOME}/.blort.rc" );
+
     # make sure that the command given is valid
     Getopt::Mixed::abortMsg('specify a command')
        if @ARGV == 0;
-
     my $command_name = shift @ARGV;
-
-    unless ( exists $command->{$command_name} ) {
-        Getopt::Mixed::abortMsg('unknown command')
-    }
-
-    # load the config
-    my $cfg = Config::Simple->new( $args->{file} || "$ENV{HOME}/.blort.rc" );
 
     if ( $command_name eq 'request-token' ) {
         request_token( $cfg, $args );
@@ -107,6 +103,33 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
         post( $cfg, $args );
     }
 
+}
+
+sub load_config {
+    my ($filename) = @_;
+
+    my $cfg;
+
+    # try loading the config file
+    $cfg = Config::Simple->new( $filename );
+    if ( defined $cfg ) {
+        # loaded file ok
+        return $cfg;
+    }
+
+    # didn't load file, let's create it
+    write_file( $filename, "Key Value\n");
+
+    # this will fail if there are no key/value pairs in the config
+    # (hence the Key/Value pair is written above)
+    $cfg = Config::Simple->new( $filename );
+    if ( defined $cfg ) {
+        # loaded file ok
+        return $cfg;
+    }
+
+    # can't open nor create config file
+    Getopt::Mixed::abortMsg( qq{couldn't open or create config file: $filename} );
 }
 
 sub default_params {
