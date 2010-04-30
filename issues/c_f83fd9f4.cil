@@ -1,0 +1,7 @@
+Issue: 9f61d725
+CreatedBy: Andrew Chilton <andychilton@gmail.com>
+Inserted: 2010-04-30T21:31:43
+Updated: 2010-04-30T21:31:43
+
+Made it so that it's an object so that some things are easier and the interface
+(notably the $self->param()) method stays the same.

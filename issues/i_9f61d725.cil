@@ -1,9 +1,10 @@
 Summary: Do our own simple config reading
-Status: New
+Status: Finished
 CreatedBy: Andrew Chilton <andychilton@gmail.com>
 AssignedTo: Andrew Chilton <andychilton@gmail.com>
+Comment: f83fd9f4
 Inserted: 2010-04-30T03:40:11
-Updated: 2010-04-30T03:40:11
+Updated: 2010-04-30T21:32:16
 
 Config::Simple does some strange things when creating a new config. ie. it
 can't read an _empty_ config. Also, when you create one, even giving it a

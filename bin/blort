@@ -13,7 +13,6 @@ use warnings;
 use Data::Dumper;
 use Getopt::Mixed "nextOption";
 use Config::Simple;
-use File::Slurp;
 use Time::Local;
 use String::Random qw(random_string);
 use DBI;
@@ -86,12 +85,18 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
     }
 
     # load the config
-    my $cfg = load_config( $args->{file} || "$ENV{HOME}/.blort.rc" );
+    my $filename = $args->{file} || "$ENV{HOME}/.blort.rc";
+    my $cfg = Config::VerySimple->new({ filename => $filename });
+    $cfg->load();
 
     # make sure that the command given is valid
     Getopt::Mixed::abortMsg('specify a command')
-       if @ARGV == 0;
+        if @ARGV == 0;
+
     my $command_name = shift @ARGV;
+    unless ( exists $command->{$command_name} ) {
+        Getopt::Mixed::abortMsg('unknown command')
+    }
 
     if ( $command_name eq 'request-token' ) {
         request_token( $cfg, $args );
@@ -106,33 +111,6 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
         post( $cfg, $args );
     }
 
-}
-
-sub load_config {
-    my ($filename) = @_;
-
-    my $cfg;
-
-    # try loading the config file
-    $cfg = Config::Simple->new( $filename );
-    if ( defined $cfg ) {
-        # loaded file ok
-        return $cfg;
-    }
-
-    # didn't load file, let's create it
-    write_file( $filename, "Key Value\n");
-
-    # this will fail if there are no key/value pairs in the config
-    # (hence the Key/Value pair is written above)
-    $cfg = Config::Simple->new( $filename );
-    if ( defined $cfg ) {
-        # loaded file ok
-        return $cfg;
-    }
-
-    # can't open nor create config file
-    Getopt::Mixed::abortMsg( qq{couldn't open or create config file: $filename} );
 }
 
 sub default_params {
@@ -335,5 +313,80 @@ sub filename {
     return $self->{_FILE_NAME};
 }
 1;
+
+## ----------------------------------------------------------------------------
+
+package Config::VerySimple;
+
+use strict;
+use warnings;
+use base 'Class::Accessor';
+
+use File::Slurp;
+
+# ToDo: Config::VerySimple->mk_accessors( qw(filename) ) wasn't working :(
+# so remove this, if it ever does
+sub filename {
+    my ($self, $filename) = @_;
+    if ( defined $filename ) {
+        $self->{filename} = $filename;
+    }
+    return $self->{filename};
+}
+
+sub param {
+    my ($self, $key, $value) = @_;
+    if ( defined $value ) {
+        $self->{cfg}{$key} = $value;
+    }
+    return $self->{cfg}{$key};
+}
+
+sub load {
+    my ($self) = @_;
+
+    # check the file is there
+    unless ( -f $self->filename ) {
+        # no file, let's write an empty file first
+        write_file($self->filename, '');
+    }
+
+    $self->{cfg} = {};
+
+    my @lines = read_file($self->filename);
+    chomp(@lines);
+    my $count = 0;
+    foreach my $line ( @lines ) {
+        $count++;
+        # skip comments
+        next if $line =~ m{ \A \s* \# }xms;
+        # skip empty lines
+        next unless $line =~ m{ \S }xms;
+
+        my ($key, $value) = $line =~ m{ \A \s* (\w+) \s+ (.+?) \s* \z }xms;
+        unless ( defined $key and defined $value ) {
+            Getopt::Mixed::abortMsg( qq{Syntax error on line $count, should be 'Key Value'} );
+        }
+
+        # check this value isn't already defined
+        if ( defined $self->{cfg}{$key} ) {
+            Getopt::Mixed::abortMsg( qq{Key '$key' on line $count has already been defined} );
+        }
+
+        $self->{cfg}{$key} = $value;
+    }
+
+    return $self;
+}
+
+sub save {
+    my ($self) = @_;
+    write_file($self->filename, map { $_ . ' ' . $self->{cfg}{$_} . "\n" } sort keys %{$self->{cfg}});
+    return $self;
+}
+
+1;
+
+# End of Config::VerySimple
 
 ## ----------------------------------------------------------------------------
