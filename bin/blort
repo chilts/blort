@@ -240,6 +240,10 @@ sub post {
         Getopt::Mixed::abortMsg(q{no tweet provided})
     }
 
+    if ( length $args->{s} > 140 ) {
+        Getopt::Mixed::abortMsg(q{Status is too long: } . length($args->{s}) . q{ chars});
+    }
+
     my $request = Net::OAuth::ProtectedResourceRequest->new(
         default_params(),
         token            => $cfg->param( 'AccessToken' ),
