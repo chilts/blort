@@ -4,6 +4,7 @@
 # * http://staynalive.com/articles/2009/05/19/social-coding-how-to-code-twitters-oauth-using-netoauth-and-perl/
 # * http://dev.twitter.com/pages/auth
 # * http://oauth.net/core/1.0a/
+# * http://www.w3.org/International/charlint/
 ## ----------------------------------------------------------------------------
 
 use strict;
