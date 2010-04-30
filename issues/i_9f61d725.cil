@@ -1,0 +1,13 @@
+Summary: Do our own simple config reading
+Status: New
+CreatedBy: Andrew Chilton <andychilton@gmail.com>
+AssignedTo: Andrew Chilton <andychilton@gmail.com>
+Inserted: 2010-04-30T03:40:11
+Updated: 2010-04-30T03:40:11
+
+Config::Simple does some strange things when creating a new config. ie. it
+can't read an _empty_ config. Also, when you create one, even giving it a
+filename, it can't write it out without specifying it again in the ->write().
+
+We'll just return a hash of the keys/values. Also provide two subroutines for
+load_cfg($filename) and save_cfg($filename, $cfg). Simple :)
