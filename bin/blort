@@ -27,6 +27,8 @@ use HTTP::Request::Common;
 use LWP::UserAgent;
 use JSON::Any;
 
+$Net::OAuth::PROTOCOL_VERSION = Net::OAuth::PROTOCOL_VERSION_1_0A;
+
 ## ----------------------------------------------------------------------------
 
 my $VERSION = '0.1';
@@ -141,7 +143,7 @@ sub default_params {
         signature_method => 'HMAC-SHA1',
         timestamp        => time(),
         nonce            => random_string('s' x 16),
-        callback_url     => 'oob',
+        callback         => 'oob',
     );
 }
 
@@ -159,9 +161,11 @@ sub request_token {
     my $response = $ua->post($request->to_url);
 
     if ( $response->is_success() ) {
-        # FixMe: see if we can get the params from the content, which looks like:
-        # * oauth_token=xxx&oauth_token_secret=xxx&oauth_callback_confirmed=true
-        my ($token, $secret) = $response->content() =~ m{oauth_token=([^&]+)&oauth_token_secret=([^&]+)}xms;
+        my $response = Net::OAuth::RequestTokenResponse->from_post_body($response->content);
+
+        my $token = $response->token;
+        my $secret = $response->token_secret;
+
         print "RequestToken  : $token\n";
         print "RequestSecret : $secret\n";
 
@@ -191,11 +195,6 @@ sub get_access_token {
     unless ( defined $args->{p} ) {
         Getopt::Mixed::abortMsg(q{no pin provided})
     }
-
-    # The Net::OAuth module doesn't (yet) allow this verifier/PIN, but it is stated in
-    # the spec here: http://oauth.net/core/1.0a/#auth_step3 so let's enable it
-    # (not quite monkeypatching).
-    Net::OAuth::AccessTokenRequest->add_required_message_params(qw/verifier/);
 
     my $request = Net::OAuth::AccessTokenRequest->new(
         default_params(),
