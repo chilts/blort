@@ -5,6 +5,7 @@
 # * http://dev.twitter.com/pages/auth
 # * http://oauth.net/core/1.0a/
 # * http://www.w3.org/International/charlint/
+# * http://dev.twitter.com/console
 ## ----------------------------------------------------------------------------
 
 use strict;
@@ -107,8 +108,8 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
     elsif ( $command_name eq 'generate-database' ) {
         generate_database( $cfg, $args );
     }
-    elsif ( $command_name eq 'post' ) {
-        post( $cfg, $args );
+    elsif ( $command_name eq 'update' ) {
+        update( $cfg, $args );
     }
 
 }
@@ -210,7 +211,7 @@ sub get_access_token {
     return $response;
 }
 
-sub post {
+sub statuses_update {
     my ($cfg, $args) = @_;
 
     # $args->{s} is the Tweet
@@ -271,7 +272,7 @@ Usage: $0 COMMAND [options]
 Commands:
    request-token
    get-access-token
-   post -s <message>
+   update -s <message>
 
 See <http://www.chilts.org/project/blort/> for further information.
 Report bugs to <andychilton\@gmail.com>.
