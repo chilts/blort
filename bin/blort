@@ -10,6 +10,7 @@
 
 use strict;
 use warnings;
+use feature 'say';
 
 use Data::Dumper;
 use Getopt::Mixed "nextOption";
@@ -26,6 +27,9 @@ use Net::OAuth::ProtectedResourceRequest;
 use HTTP::Request::Common;
 use LWP::UserAgent;
 use JSON::Any;
+use Date::Parse;
+use DateTime;
+use Term::ANSIColor qw(:constants);
 
 $Net::OAuth::PROTOCOL_VERSION = Net::OAuth::PROTOCOL_VERSION_1_0A;
 
@@ -53,7 +57,8 @@ my $command = {
     'get-access-token'   => 1,
     'generate-database'  => 1,
     'verify-credentials' => 1,
-    'post'               => 1,
+    'update'             => 1,
+    'home-timeline'      => 1,
 };
 
 my $consumer_key = 'RkUuAkKWMeR4LOSp4torTQ';
@@ -62,6 +67,7 @@ my $request_token_url = 'https://api.twitter.com/oauth/request_token';
 my $authorize_url = 'https://api.twitter.com/oauth/authorize';
 my $access_token_url = 'https://api.twitter.com/oauth/access_token';
 my $post_url = 'http://api.twitter.com/1/statuses/update.json';
+my $home_timeline_url = 'http://api.twitter.com/1/statuses/home_timeline.json';
 
 # Using OAuth
 # 1) Retrieve a Request Token
@@ -109,9 +115,11 @@ my $post_url = 'http://api.twitter.com/1/statuses/update.json';
         generate_database( $cfg, $args );
     }
     elsif ( $command_name eq 'update' ) {
-        update( $cfg, $args );
+        statuses_update( $cfg, $args );
     }
-
+    elsif ( $command_name eq 'home-timeline' ) {
+        statuses_home_timeline( $cfg, $args );
+    }
 }
 
 sub default_params {
@@ -247,6 +255,55 @@ sub statuses_update {
     print Dumper($json);
 
     return $json->{id}; # something true
+}
+
+sub statuses_home_timeline {
+    my ($cfg, $args) = @_;
+
+    # no args
+
+    # change the time into something more sensible
+    # * Sat May 01 07:54:15 +0000 2010
+    # * 2010-05-01 07:54:15
+    my $response = protected_resource( $cfg, $home_timeline_url, {} );
+    foreach my $tweet ( @$response ) {
+        my $datetime = DateTime->from_epoch( epoch => str2time( $tweet->{created_at} ) );
+        $tweet->{created_at} = $datetime->ymd . ' ' . $datetime->hms;
+    }
+
+    # sort by time
+    @$response = sort { $a->{created_at} cmp $b->{created_at} } @$response;
+
+    foreach my $tweet ( @$response ) {
+
+        # print Dumper($tweet);
+        say BOLD, GREEN, "$tweet->{user}{screen_name} ", RESET, DARK, YELLOW, "($tweet->{created_at}) ", CYAN, "[$tweet->{id}]", RESET;
+        say "    $tweet->{text}";
+    }
+}
+
+sub protected_resource {
+    my ($cfg, $url, $params) = @_;
+
+    my $request = Net::OAuth::ProtectedResourceRequest->new(
+        default_params(),
+        token            => $cfg->param( 'AccessToken' ),
+        token_secret     => $cfg->param( 'AccessSecret' ),
+        request_url      => $url,
+        request_method   => 'POST',
+        extra_params     => $params,
+    );
+    $request->sign();
+
+    my $ua = LWP::UserAgent->new();
+    my $response = $ua->post($request->to_url);
+
+    unless ( $response->is_success ) {
+        print STDERR 'Could not access Protected Resource: ', $response->as_string, "\n";
+        return;
+    }
+
+    return JSON::Any->jsonToObj( $response->content() );
 }
 
 =for COMMENT
